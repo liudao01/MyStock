@@ -1,7 +1,10 @@
 """
-Streamlit 前端
+Streamlit 前端 - 增加背离可视化图表
 """
 import streamlit as st
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import pandas as pd
 from analysis import *
 from storage import *
 
@@ -58,7 +61,7 @@ if st.button("开始分析", type="primary", key="single_analyze"):
 if "analyze_code" in st.session_state:
     code = st.session_state["analyze_code"]
     symbol = normalize_symbol(code)
-     # ===== 这里放标题，保证 symbol 已就绪 =====
+    # ===== 这里放标题，保证 symbol 已就绪 =====
     st.header(f"🔍 单股分析 —— {get_stock_name(symbol)}")
     with st.spinner("正在获取数据并计算指标..."):
         try:
@@ -67,7 +70,8 @@ if "analyze_code" in st.session_state:
                 st.error("未获取到数据，请检查代码是否正确")
                 st.stop()
             df = compute_enhanced_indicators(df)
-            div   = comprehensive_divergence_analysis(df)
+            # 修改这里：接收两个返回值
+            div, error_msg = comprehensive_divergence_analysis(df)
             advice = generate_trading_advice(div, df)
             trend = analyze_trend(df)
             latest = df.iloc[-1]
@@ -84,7 +88,11 @@ if "analyze_code" in st.session_state:
     st.subheader("💡 操作建议")
     st.info(advice)
 
-    if div:
+    if error_msg:
+        st.error("背离分析失败")
+        with st.expander("查看计算过程"):
+            st.text(error_msg)
+    elif div:
         level = div.get("level", "背离")
         if level == "强烈背离":
             st.success(f"🎯 检测到{level}（{len(div['signals'])}重确认，置信度 {div['confidence']:.0%}）")
@@ -92,12 +100,146 @@ if "analyze_code" in st.session_state:
             st.warning(f"📊 检测到{level}（{len(div['signals'])}重确认，置信度 {div['confidence']:.0%}）")
         else:
             st.info(f"检测到背离信号（{len(div['signals'])}重确认，置信度 {div['confidence']:.0%}）")
-        with st.expander("展开信号明细"):
-            st.write("、".join(div["signals"]))
+        
+        # 显示检测到的信号
+        st.subheader("✅ 检测到的背离信号")
+        for signal in div['signals']:
+            st.write(f"- {signal}")
+        
+        # ========== 新增：背离可视化图表 ==========
+        st.subheader("📊 背离可视化")
+        
+        # 创建子图：价格和MACD
+        fig = make_subplots(
+            rows=2, cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.1,
+            subplot_titles=('价格走势与背离标记', 'MACD指标'),
+            row_width=[0.7, 0.3]
+        )
+        
+        # 重置索引以便按位置访问
+        df_reset = df.reset_index()
+        dates = pd.to_datetime(df_reset["date"]) if "date" in df_reset.columns else pd.to_datetime(df_reset.index)
+        
+        # 第一子图：价格和均线
+        fig.add_trace(
+            go.Scatter(x=dates, y=df_reset["close"], name="收盘价", line=dict(color='black', width=1)),
+            row=1, col=1
+        )
+        fig.add_trace(
+            go.Scatter(x=dates, y=df_reset["ma5"], name="MA5", line=dict(color='blue', width=1)),
+            row=1, col=1
+        )
+        fig.add_trace(
+            go.Scatter(x=dates, y=df_reset["ma20"], name="MA20", line=dict(color='orange', width=1)),
+            row=1, col=1
+        )
+        
+        # 标记背离的低点
+        date1_idx = dates[dates == div['date1']].index[0]
+        date2_idx = dates[dates == div['date2']].index[0]
+        
+        # 添加低点标记
+        fig.add_trace(
+            go.Scatter(
+                x=[div['date1'], div['date2']],
+                y=[div['price1'], div['price2']],
+                mode='markers+text',
+                marker=dict(size=12, color='red', symbol='circle'),
+                text=[f"低点A", f"低点B"],
+                textposition="top center",
+                name="背离低点",
+                hovertemplate="<b>%{text}</b><br>日期: %{x}<br>价格: %{y:.2f}<extra></extra>"
+            ),
+            row=1, col=1
+        )
+        
+        # 添加连接线
+        fig.add_trace(
+            go.Scatter(
+                x=[div['date1'], div['date2']],
+                y=[div['price1'], div['price2']],
+                mode='lines',
+                line=dict(color='red', width=2, dash='dash'),
+                showlegend=False,
+                hovertemplate=None
+            ),
+            row=1, col=1
+        )
+        
+        # 第二子图：MACD
+        fig.add_trace(
+            go.Scatter(x=dates, y=df_reset["macd"], name="MACD", line=dict(color='purple', width=1)),
+            row=2, col=1
+        )
+        fig.add_trace(
+            go.Scatter(x=dates, y=df_reset["macd_dif"], name="DIF", line=dict(color='blue', width=1)),
+            row=2, col=1
+        )
+        fig.add_trace(
+            go.Scatter(x=dates, y=df_reset["macd_signal"], name="DEA", line=dict(color='red', width=1)),
+            row=2, col=1
+        )
+        
+        # 标记MACD低点
+        fig.add_trace(
+            go.Scatter(
+                x=[div['date1'], div['date2']],
+                y=[div['macd1'], div['macd2']],
+                mode='markers+text',
+                marker=dict(size=10, color='green', symbol='diamond'),
+                text=[f"MACD: {div['macd1']:.4f}", f"MACD: {div['macd2']:.4f}"],
+                textposition="top center",
+                name="MACD低点",
+                hovertemplate="<b>%{text}</b><br>日期: %{x}<br>MACD: %{y:.4f}<extra></extra>"
+            ),
+            row=2, col=1
+        )
+        
+        # 添加MACD连接线
+        fig.add_trace(
+            go.Scatter(
+                x=[div['date1'], div['date2']],
+                y=[div['macd1'], div['macd2']],
+                mode='lines',
+                line=dict(color='green', width=2, dash='dash'),
+                showlegend=False,
+                hovertemplate=None
+            ),
+            row=2, col=1
+        )
+        
+        # 更新图表布局
+        fig.update_layout(
+            height=600,
+            title_text=f"底背离可视化 - {get_stock_name(symbol)}",
+            hovermode='x unified',
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
+        
+        # 更新y轴标题
+        fig.update_yaxes(title_text="价格", row=1, col=1)
+        fig.update_yaxes(title_text="MACD", row=2, col=1)
+        
+        # 显示图表
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # 图表说明
+        st.markdown("""
+        **图表说明:**
+        - **上图**: 价格走势，红色虚线连接两个背离低点
+        - **下图**: MACD指标，绿色虚线连接MACD低点
+        - **背离特征**: 价格创新低(低点B < 低点A)，但MACD指标抬高(低点B > 低点A)
+        """)
+        
+        # 显示详细计算过程
+        with st.expander("🔍 查看详细计算过程"):
+            st.text(div.get('calculation_steps', '无计算过程记录'))
     else:
         st.warning("未检测到明显底背离形态")
 
-    # 画图
+    # 原有的简单图表
     st.subheader("价格与均线")
     chart_df = df[['close']].copy()
     chart_df['MA5'] = df['ma5']
