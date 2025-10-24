@@ -34,7 +34,8 @@ if self_list:
     for item in self_list:
         col1, col2 = st.columns([4, 1])
         with col1:
-            if st.button(f"{item['code']} 📊", key=f"analyze_{item['code']}"):
+            btn_txt = f"{item['code']} {item.get('name', '')} 📊".strip()
+            if st.button(btn_txt, key=f"analyze_{item['code']}"):
                 st.session_state["analyze_code"] = item["code"]
         with col2:
             if st.button("删", key=f"del_{item['code']}"):
@@ -45,7 +46,7 @@ else:
 
 # ---------------- 单股分析 ----------------
 st.markdown("---")
-st.header("🔍 单股分析")
+
 single_code = st.text_input("或直接输入代码快速分析", max_chars=6, key="single_code")
 if st.button("开始分析", type="primary", key="single_analyze"):
     if single_code.isdigit() and len(single_code) == 6:
@@ -57,6 +58,8 @@ if st.button("开始分析", type="primary", key="single_analyze"):
 if "analyze_code" in st.session_state:
     code = st.session_state["analyze_code"]
     symbol = normalize_symbol(code)
+     # ===== 这里放标题，保证 symbol 已就绪 =====
+    st.header(f"🔍 单股分析 —— {get_stock_name(symbol)}")
     with st.spinner("正在获取数据并计算指标..."):
         try:
             df = ak.stock_zh_a_daily(symbol=symbol, adjust="qfq").tail(150)
